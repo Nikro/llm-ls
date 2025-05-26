@@ -1,5 +1,5 @@
 use super::{Generation, NAME, VERSION};
-use custom_types::llm_ls::{Backend, Ide};
+use custom_types::llm_ls::{Backend, FimParams, FimStyle, Ide};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -211,11 +211,19 @@ pub(crate) fn build_body(
     backend: &Backend,
     model: String,
     prompt: String,
+    suffix: Option<String>,
+    fim: &FimParams,
     mut request_body: Map<String, Value>,
 ) -> Map<String, Value> {
     match backend {
         Backend::HuggingFace { .. } | Backend::Tgi { .. } => {
-            request_body.insert("inputs".to_owned(), Value::String(prompt));
+            // Check if we're using PromptSuffix style and have a suffix
+            if let (Some(suffix_text), Some(FimStyle::PromptSuffix)) = (&suffix, fim.style.as_ref()) {
+                request_body.insert("prompt".to_owned(), Value::String(prompt));
+                request_body.insert("suffix".to_owned(), Value::String(suffix_text.clone()));
+            } else {
+                request_body.insert("inputs".to_owned(), Value::String(prompt));
+            }
             if let Some(Value::Object(params)) = request_body.get_mut("parameters") {
                 params.insert("return_full_text".to_owned(), Value::Bool(false));
             } else {
