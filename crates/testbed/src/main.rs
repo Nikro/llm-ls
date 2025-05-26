@@ -558,6 +558,7 @@ async fn complete_holes(
                 tokenizer_config: tokenizer_config.clone(),
                 request_body: request_body.clone(),
                 disable_url_path_completion,
+                suffix: None, // This will be populated by build_prompt
             })
             .await?;
 

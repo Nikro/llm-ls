@@ -1,6 +1,6 @@
 use clap::Parser;
 use custom_types::llm_ls::{
-    AcceptCompletionParams, Backend, Completion, FimParams, GetCompletionsParams,
+    AcceptCompletionParams, Backend, Completion, FimParams, FimStyle, GetCompletionsParams,
     GetCompletionsResult, Ide, RejectCompletionParams, TokenizerConfig,
 };
 use ropey::Rope;
@@ -144,65 +144,128 @@ fn build_prompt(
     fim: &FimParams,
     tokenizer: Option<Arc<Tokenizer>>,
     context_window: usize,
-) -> Result<String> {
+) -> Result<(String, Option<String>)> {
     let t = Instant::now();
     if fim.enabled {
-        let mut remaining_token_count = context_window - 3; // account for FIM tokens
-        let mut before_iter = text.lines_at(pos.line as usize + 1).reversed();
-        let mut after_iter = text.lines_at(pos.line as usize);
-        let mut before_line = before_iter.next();
-        if let Some(line) = before_line {
-            let col = (pos.character as usize).clamp(0, line.len_chars());
-            before_line = Some(line.slice(0..col));
-        }
-        let mut after_line = after_iter.next();
-        if let Some(line) = after_line {
-            let col = (pos.character as usize).clamp(0, line.len_chars());
-            after_line = Some(line.slice(col..));
-        }
-        let mut before = vec![];
-        let mut after = String::new();
-        while before_line.is_some() || after_line.is_some() {
-            if let Some(before_line) = before_line {
-                let before_line = before_line.to_string();
-                let tokens = if let Some(tokenizer) = tokenizer.clone() {
-                    tokenizer.encode(before_line.clone(), false)?.len()
-                } else {
-                    before_line.len()
-                };
-                if tokens > remaining_token_count {
-                    break;
+        let fim_style = fim.style.as_ref().unwrap_or(&FimStyle::Markers);
+        
+        match fim_style {
+            FimStyle::PromptSuffix => {
+                // NEW: Prompt + Suffix style (for Codestral)
+                let mut remaining_token_count = context_window / 2; // Split between prefix and suffix
+                
+                // Build prefix (content before cursor)
+                let mut before = vec![];
+                let mut first = true;
+                for mut line in text.lines_at(pos.line as usize + 1).reversed() {
+                    if first {
+                        let col = (pos.character as usize).clamp(0, line.len_chars());
+                        line = line.slice(0..col);
+                        first = false;
+                    }
+                    let line = line.to_string();
+                    let tokens = if let Some(tokenizer) = tokenizer.clone() {
+                        tokenizer.encode(line.clone(), false)?.len()
+                    } else {
+                        line.len()
+                    };
+                    if tokens > remaining_token_count {
+                        break;
+                    }
+                    remaining_token_count -= tokens;
+                    before.push(line);
                 }
-                remaining_token_count -= tokens;
-                before.push(before_line);
-            }
-            if let Some(after_line) = after_line {
-                let after_line = after_line.to_string();
-                let tokens = if let Some(tokenizer) = tokenizer.clone() {
-                    tokenizer.encode(after_line.clone(), false)?.len()
-                } else {
-                    after_line.len()
-                };
-                if tokens > remaining_token_count {
-                    break;
+                let prefix = before.into_iter().rev().collect::<Vec<_>>().join("");
+                
+                // Build suffix (content after cursor)
+                let mut after = String::new();
+                let mut after_iter = text.lines_at(pos.line as usize);
+                let mut after_line = after_iter.next();
+                if let Some(line) = after_line {
+                    let col = (pos.character as usize).clamp(0, line.len_chars());
+                    after_line = Some(line.slice(col..));
                 }
-                remaining_token_count -= tokens;
-                after.push_str(&after_line);
+                let mut suffix_token_count = context_window / 2;
+                
+                while let Some(line) = after_line {
+                    let line = line.to_string();
+                    let tokens = if let Some(tokenizer) = tokenizer.clone() {
+                        tokenizer.encode(line.clone(), false)?.len()
+                    } else {
+                        line.len()
+                    };
+                    if tokens > suffix_token_count {
+                        break;
+                    }
+                    suffix_token_count -= tokens;
+                    after.push_str(&line);
+                    after_line = after_iter.next();
+                }
+                
+                let time = t.elapsed().as_millis();
+                info!(prefix, suffix = after, build_prompt_ms = time, "built prompt+suffix in {time} ms");
+                Ok((prefix, Some(after)))
             }
-            before_line = before_iter.next();
-            after_line = after_iter.next();
+            FimStyle::Markers => {
+                // Original FIM markers style
+                let mut remaining_token_count = context_window - 3; // account for FIM tokens
+                let mut before_iter = text.lines_at(pos.line as usize + 1).reversed();
+                let mut after_iter = text.lines_at(pos.line as usize);
+                let mut before_line = before_iter.next();
+                if let Some(line) = before_line {
+                    let col = (pos.character as usize).clamp(0, line.len_chars());
+                    before_line = Some(line.slice(0..col));
+                }
+                let mut after_line = after_iter.next();
+                if let Some(line) = after_line {
+                    let col = (pos.character as usize).clamp(0, line.len_chars());
+                    after_line = Some(line.slice(col..));
+                }
+                let mut before = vec![];
+                let mut after = String::new();
+                while before_line.is_some() || after_line.is_some() {
+                    if let Some(before_line) = before_line {
+                        let before_line = before_line.to_string();
+                        let tokens = if let Some(tokenizer) = tokenizer.clone() {
+                            tokenizer.encode(before_line.clone(), false)?.len()
+                        } else {
+                            before_line.len()
+                        };
+                        if tokens > remaining_token_count {
+                            break;
+                        }
+                        remaining_token_count -= tokens;
+                        before.push(before_line);
+                    }
+                    if let Some(after_line) = after_line {
+                        let after_line = after_line.to_string();
+                        let tokens = if let Some(tokenizer) = tokenizer.clone() {
+                            tokenizer.encode(after_line.clone(), false)?.len()
+                        } else {
+                            after_line.len()
+                        };
+                        if tokens > remaining_token_count {
+                            break;
+                        }
+                        remaining_token_count -= tokens;
+                        after.push_str(&after_line);
+                    }
+                    before_line = before_iter.next();
+                    after_line = after_iter.next();
+                }
+                let prompt = format!(
+                    "{}{}{}{}{}",
+                    fim.prefix,
+                    before.into_iter().rev().collect::<Vec<_>>().join(""),
+                    fim.suffix,
+                    after,
+                    fim.middle
+                );
+                let time = t.elapsed().as_millis();
+                info!(prompt, build_prompt_ms = time, "built prompt in {time} ms");
+                Ok((prompt, None))
+            }
         }
-        let prompt = format!(
-            "{}{}{}{}{}",
-            fim.prefix,
-            before.into_iter().rev().collect::<Vec<_>>().join(""),
-            fim.suffix,
-            after,
-            fim.middle
-        );
-        let time = t.elapsed().as_millis();
-        info!(prompt, build_prompt_ms = time, "built prompt in {time} ms");
-        Ok(prompt)
     } else {
         let mut remaining_token_count = context_window;
         let mut before = vec![];
@@ -228,7 +291,7 @@ fn build_prompt(
         let prompt = before.into_iter().rev().collect::<Vec<_>>().join("");
         let time = t.elapsed().as_millis();
         info!(prompt, build_prompt_ms = time, "built prompt in {time} ms");
-        Ok(prompt)
+        Ok((prompt, None))
     }
 }
 
@@ -243,6 +306,8 @@ async fn request_completion(
         &params.backend,
         params.model.clone(),
         prompt,
+        params.suffix.clone(),
+        &params.fim,
         params.request_body.clone(),
     );
     let headers = build_headers(&params.backend, params.api_token.as_ref(), params.ide)?;
@@ -554,7 +619,7 @@ impl LlmService {
                 params.ide,
             )
             .await?;
-            let prompt = build_prompt(
+            let (prompt, suffix) = build_prompt(
                 params.text_document_position.position,
                 &document.text,
                 &params.fim,
@@ -568,10 +633,12 @@ impl LlmService {
             } else {
                 &self.http_client
             };
+            let mut completion_params = params.clone();
+            completion_params.suffix = suffix;
             let result = request_completion(
                 http_client,
                 prompt,
-                &params,
+                &completion_params,
             )
             .await?;
 
