@@ -108,9 +108,24 @@ impl Backend {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FimStyle {
+    Markers,
+    PromptSuffix,
+}
+
+impl Default for FimStyle {
+    fn default() -> Self {
+        Self::Markers
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct FimParams {
     pub enabled: bool,
+    #[serde(default)]
+    pub style: Option<FimStyle>,
     pub prefix: String,
     pub middle: String,
     pub suffix: String,
@@ -153,6 +168,7 @@ pub struct GetCompletionsParams {
     pub request_body: Map<String, Value>,
     #[serde(default)]
     pub disable_url_path_completion: bool,
+    pub suffix: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
