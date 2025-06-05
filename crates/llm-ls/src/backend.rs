@@ -242,6 +242,11 @@ pub(crate) fn build_body(
             request_body.insert("prompt".to_owned(), Value::String(prompt));
             request_body.insert("model".to_owned(), Value::String(model));
             request_body.insert("stream".to_owned(), Value::Bool(false));
+            
+            // Add suffix support for prompt_suffix FIM style
+            if let (Some(suffix_text), Some(FimStyle::PromptSuffix)) = (&suffix, fim.style.as_ref()) {
+                request_body.insert("suffix".to_owned(), Value::String(suffix_text.clone()));
+            }
         }
     };
     request_body
