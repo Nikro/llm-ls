@@ -82,6 +82,11 @@ fn get_parser(language_id: LanguageId) -> Result<Parser> {
             parser.set_language(tree_sitter_objc::language())?;
             Ok(parser)
         }
+        LanguageId::Php => {
+            let mut parser = Parser::new();
+            parser.set_language(tree_sitter_php::language())?;
+            Ok(parser)
+        }
         LanguageId::Python => {
             let mut parser = Parser::new();
             parser.set_language(tree_sitter_python::language())?;
